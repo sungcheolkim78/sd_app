@@ -10,5 +10,6 @@ wget https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/mai
 wget https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl_vae.safetensors
 wget https://huggingface.co/stabilityai/sdxl-turbo/resolve/main/sd_xl_turbo_1.0_fp16.safetensors
 wget https://huggingface.co/latent-consistency/lcm-lora-sdv1-5/resolve/main/pytorch_lora_weights.safetensors
+wget https://huggingface.co/stabilityai/sd-turbo/resolve/main/sd_turbo.safetensors
 
 mv *.safetensors $model_path

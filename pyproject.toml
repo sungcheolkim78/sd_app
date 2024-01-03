@@ -89,7 +89,7 @@ include = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/openai"]
+packages = ["src/scsd"]
 
 [tool.black]
 line-length = 120
