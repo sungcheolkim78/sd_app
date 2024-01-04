@@ -1,3 +1,6 @@
 models/
 .ipynb_checkpoints/
 output/
+.DS_Store
+__pycache__/
+._.DS_Store
