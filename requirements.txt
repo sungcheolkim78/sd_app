@@ -3,6 +3,6 @@ invisible_watermark
 transformers
 accelerate
 safetensors
-optimum[openvino]
 tomesd
 peft
+compel
