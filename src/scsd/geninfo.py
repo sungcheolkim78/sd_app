@@ -21,3 +21,4 @@ class LDMInfo(BaseModel):
     scheduler: str
     vae: str
     lora_list: list
+    use_compel: bool

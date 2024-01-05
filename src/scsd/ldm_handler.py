@@ -15,6 +15,7 @@ from diffusers.pipelines.auto_pipeline import (
     AutoPipelineForText2Image,
     AutoPipelineForImage2Image,
 )
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers.scheduling_pndm import PNDMScheduler
 from diffusers.schedulers.scheduling_dpmsolver_multistep import (
     DPMSolverMultistepScheduler,
@@ -23,6 +24,7 @@ from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import
     StableDiffusionXLPipeline,
 )
 
+from .utils import grid_images
 from .geninfo import LDMInfo
 
 logging.basicConfig(level=logging.INFO)
@@ -31,7 +33,11 @@ logger.setLevel(logging.INFO)
 
 torch.backends.cuda.matmul.allow_tf32 = True
 
-model_dict = {"turbo": "stabilityai/sdxl-turbo", "sdxl": "stabilityai/stable-diffusion-xl-base-1.0"}
+model_dict = {
+    "turbo": "stabilityai/sdxl-turbo",
+    "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
+    "sdxl-refiner": "stabilityai/stable-diffusion-xl-refiner-1.0",
+}
 
 
 class LDMHandler(object):
@@ -66,6 +72,7 @@ class LDMHandler(object):
             scheduler="",
             vae="",
             lora_list=[],
+            use_compel=True,
         )
         if not self.db_path.exists():
             self.db = self._create_db()
@@ -75,7 +82,6 @@ class LDMHandler(object):
         self.mode = mode
         self.pipe = None
         self.compel = None
-        self.set_pipe(mode)
 
     def _create_db(self) -> pd.DataFrame:
         columns = list(self.ldm_info.__fields__.keys())
@@ -119,6 +125,7 @@ class LDMHandler(object):
             torch_dtype = torch.float16
         elif mode == "sdxl":
             self.ldm_info.num_inference_steps = 20
+            self.ldm_info.guidance_scale = 7.5
             self.ldm_info.height = 1024
             self.ldm_info.width = 1024
             self.ldm_info.high_gpu_mem = False
@@ -136,21 +143,9 @@ class LDMHandler(object):
                 variant="fp16",
             )
 
-        self.pipe_img2img = AutoPipelineForImage2Image.from_pipe(self.pipe)
+        # self.pipe_img2img = AutoPipelineForImage2Image.from_pipe(self.pipe)
 
-        # only for pytorch < 2.0
-        # pipe.enable_xformers_memory_efficient_attention()
-
-        self.pipe.unet.to(memory_format=torch.channels_last)
-        self.pipe.vae.to(memory_format=torch.channels_last)
-        self.pipe.enable_vae_slicing()
-        self.pipe.enable_vae_tiling()
-        self.pipe.upcast_vae()
-
-        if self.ldm_info.high_gpu_mem:
-            self.pipe.to("cuda")
-        else:
-            self.pipe.enable_model_cpu_offload()
+        self.pipe = self._optimize_pipeline(self.pipe)
 
         self.compel = Compel(
             tokenizer=[self.pipe.tokenizer, self.pipe.tokenizer_2],
@@ -164,6 +159,23 @@ class LDMHandler(object):
 
         logger.info("model id: %s", self.ldm_info.hfmodel_id)
         logger.info("set pipe: %.2f sec", time.time() - start_time)
+
+    def _optimize_pipeline(self, pipe):
+        # only for pytorch < 2.0
+        # pipe.enable_xformers_memory_efficient_attention()
+
+        pipe.unet.to(memory_format=torch.channels_last)
+        pipe.vae.to(memory_format=torch.channels_last)
+        pipe.enable_vae_slicing()
+        pipe.enable_vae_tiling()
+        # pipe.upcast_vae()
+
+        if self.ldm_info.high_gpu_mem:
+            pipe.to("cuda")
+        else:
+            pipe.enable_model_cpu_offload()
+
+        return pipe
 
     def set_scheduler(self, name: str):
         if name == "DPM":
@@ -185,15 +197,17 @@ class LDMHandler(object):
         """
 
         prompts = batch_size * [self.ldm_info.prompt]
-        conditioning, pooled = self.compel(prompts)
         input_dict = {
-            "prompt_embeds": conditioning,
-            "pooled_prompt_embeds": pooled,
             "generator": [torch.Generator("cuda").manual_seed(i + self.ldm_info.init_index) for i in range(batch_size)],
             "num_inference_steps": self.ldm_info.num_inference_steps,
             "height": self.ldm_info.height,
             "width": self.ldm_info.width,
         }
+
+        if self.ldm_info.use_compel:
+            input_dict["prompt_embeds"], input_dict["pooled_prompt_embeds"] = self.compel(prompts)
+        else:
+            input_dict["prompt"] = prompts
 
         if self.ldm_info.lora_scale > 0:
             input_dict["cross_atention_kwargs"] = {"scale": self.ldm_info.lora_scale}
@@ -228,6 +242,14 @@ class LDMHandler(object):
     ):
         start_time = time.time()
 
+        # set mode
+        if mode != "" and mode != self.mode:
+            self.mode = mode
+            self.set_pipe(mode)
+        elif self.pipe is None:
+            self.set_pipe(self.mode)
+
+        # set prompt
         self.ldm_info.prompt = prompt
         if self.ldm_info.prompt_style != "":
             self.ldm_info.prompt += self.ldm_info.prompt_style
@@ -235,9 +257,6 @@ class LDMHandler(object):
             self.ldm_info.negative_prompt = "ugly, deformed, disfigured, poor details, bad anatomy"
         else:
             self.ldm_info.negative_prompt = negative_prompt
-        if mode != "" and mode != self.mode:
-            self.mode = mode
-            self.set_pipe(mode)
         if init_index != 0:
             self.ldm_info.init_index = init_index
         if height > 0:
@@ -261,7 +280,7 @@ class LDMHandler(object):
 
         if len(images) == batch_size:
             logger.info("Loading from cache: %s", self.sd_output_dir / topic)
-            return self._grid_images(images)
+            return grid_images(images)
 
         # create batch inputs
         inputs = self._get_batch_inputs(batch_size=batch_size)
@@ -291,15 +310,7 @@ class LDMHandler(object):
         self.db.to_parquet(self.db_path)
         logger.info("Time: %.2f sec, Write to: %s", time.time() - start_time, self.db_path)
 
-        return self._grid_images(images)
-
-    def _grid_images(self, images: List[Image.Image]):
-        if len(images) == 1:
-            return images[0]
-        elif len(images) <= 4:
-            return make_image_grid(images, rows=1, cols=len(images))
-        else:
-            return make_image_grid(images, rows=2, cols=len(images) // 2)
+        return grid_images(images)
 
     def _find_same_info(self, db_dump: Dict) -> List:
         """
@@ -426,3 +437,42 @@ class LDMHandler(object):
     def disable_freeu(self):
         self.pipe.disable_freeu()
         self.ldm_info.enable_freeu = False
+
+    def refine(self, prompt: str = "", num_inference_steps: int = 40, denoising_start: float = 0.8):
+        # load model
+        # self.ldm_info.use_compel = False
+        self.ldm_info.high_gpu_mem = False
+        self.ldm_info.hfmodel_id = model_dict["sdxl"]
+        self.pipe = DiffusionPipeline.from_pretrained(
+            self.ldm_info.hfmodel_id, torch_dtype=torch.float16, use_safetensors=True, variant="fp16"
+        )
+        self.pipe = self._optimize_pipeline(self.pipe)
+
+        self.refiner = DiffusionPipeline.from_pretrained(
+            model_dict["sdxl-refiner"],
+            text_encoder_2=self.pipe.text_encoder_2,
+            vae=self.pipe.vae,
+            torch_dtype=torch.float16,
+            use_safetensors=True,
+            variant="fp16",
+        )
+        self.refiner = self._optimize_pipeline(self.refiner)
+
+        # create image
+        self.ldm_info.prompt = prompt
+        self.ldm_info.num_inference_steps = num_inference_steps
+        self.ldm_info.height = 1024
+        self.ldm_info.width = 1024
+        batch_input = self._get_batch_inputs(batch_size=1)
+        batch_input["denoising_end"] = denoising_start
+        batch_input["output_type"] = "latent"
+        image = self.pipe(**batch_input).images
+
+        image = self.refiner(
+            prompt=self.ldm_info.prompt,
+            num_inference_steps=num_inference_steps,
+            denoising_start=denoising_start,
+            image=image,
+        ).images[0]
+
+        return image
