@@ -5,3 +5,4 @@ accelerate
 safetensors
 optimum[openvino]
 tomesd
+peft
