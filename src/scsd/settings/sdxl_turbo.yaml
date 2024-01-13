@@ -1,0 +1,23 @@
+mode: "turbo"
+hfmodel_id: "stabilityai/sdxl-turbo"
+refiner_id: ""
+scheduler_id: ""
+vae_id: "madebyollin/sdxl-vae-fp16-fix"
+enable_freeu: False
+high_gpu_mem: True
+optimize: False
+torch_dtype: "float16"
+
+init_index: 0
+num_inference_steps: 4
+denoising_end: 1.0
+prompt_style: ""
+lora_scale: 0.0
+prompt: ""
+negative_prompt: ""
+guidance_scale: 0.0
+height: 512
+width: 512
+lora_list: []
+enable_compel: True
+enable_img2img: True

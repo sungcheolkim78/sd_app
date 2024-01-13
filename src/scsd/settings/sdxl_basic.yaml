@@ -1,0 +1,23 @@
+mode: "basic"
+hfmodel_id: "stabilityai/stable-diffusion-xl-base-1.0"
+refiner_id: ""
+scheduler_id: ""
+vae_id: "madebyollin/sdxl-vae-fp16-fix"
+enable_freeu: False
+high_gpu_mem: False
+optimize: False
+torch_dtype: "float16"
+
+init_index: 0
+num_inference_steps: 20
+denoising_end: 1.0
+prompt_style: ""
+lora_scale: 0.0
+prompt: ""
+negative_prompt: "ugly, deformed, disfigured, poor details, bad anatomy"
+guidance_scale: 7.5
+height: 1024
+width: 1024
+lora_list: []
+enable_compel: True
+enable_img2img: False

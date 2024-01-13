@@ -98,8 +98,6 @@ target-version = ["py37"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--tb=short"
-xfail_strict = true
-asyncio_mode = "auto"
 filterwarnings = [
   "error"
 ]
