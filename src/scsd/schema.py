@@ -40,13 +40,17 @@ def load_ldminfo(ldminfo_path: str) -> LDMInfo:
 
 
 def load_default_ldminfo(mode: str = "turbo") -> LDMInfo:
-    config_file = impresources.files(settings) / f"sdxl_{mode}.yaml"
+    if mode.startswith("v"):
+        filename = f"sd_{mode}.yaml"
+    else:
+        filename = f"sdxl_{mode}.yaml"
+    config_file = impresources.files(settings) / filename
 
     try:
         with config_file.open("rb") as f:
             config = yaml.safe_load(f)
     except AttributeError:
-        text = impresources.read_text(settings, f"sdxl_{mode}.yaml")
+        text = impresources.read_text(settings, filename)
         config = yaml.safe_load(text)
 
     return LDMInfo(**config)

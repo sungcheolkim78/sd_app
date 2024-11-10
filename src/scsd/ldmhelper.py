@@ -81,9 +81,7 @@ class LDMHelper(object):
         self.sd_pipeline.set_prompt(prompt)
         if self.sd_pipeline.ldm_info.prompt_style != "":
             self.sd_pipeline.ldm_info.prompt += self.sd_pipeline.ldm_info.prompt_style
-        if negative_prompt == "" and self.mode != "turbo":
-            self.sd_pipeline.ldm_info.negative_prompt = "ugly, deformed, disfigured, poor details, bad anatomy"
-        else:
+        if negative_prompt != "":
             self.sd_pipeline.ldm_info.negative_prompt = negative_prompt
         if init_index != 0:
             self.sd_pipeline.ldm_info.init_index = init_index
@@ -153,12 +151,15 @@ class LDMHelper(object):
         """
 
         col_list = [x for x in self.sd_pipeline.ldm_info.model_fields.keys() if x not in ["init_index"]]
+        logger.debug("col_list: %s", col_list)
+
         same_info = []
         for i, row in self.db.iterrows():
             for col in col_list:
                 if row[col] != db_dump[col]:
                     break
             else:
+                logger.info("Found the same info: %d - %d", i, row["seed"])
                 same_info.append({"seed": row["seed"], "output_file_path": row["output_file_path"]})
 
         return same_info

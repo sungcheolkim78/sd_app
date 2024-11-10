@@ -21,7 +21,7 @@ from diffusers.schedulers.scheduling_dpmsolver_multistep import (
 from .schema import LDMInfo, load_default_ldminfo
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("pipeline")
 logger.setLevel(logging.INFO)
 
 
@@ -66,8 +66,11 @@ class SDPipeline(object):
         self.ldm_info.scheduler_id = self.pipe.scheduler.config._class_name
 
     def generate_batch(self, batch_size: int = 4) -> List[Image.Image]:
+        start_time = time.time()
+        logger.info("ldm_info: %s", self.ldm_info)
         input_dict = self._get_batch_inputs(batch_size=batch_size)
         images = self._generate_image_from_text(input_dict)
+        logger.info("generate image(%d): %.2f sec", len(images), time.time() - start_time)
         return images
 
     def _get_single_inputs(self) -> Dict:
@@ -83,26 +86,30 @@ class SDPipeline(object):
         }
 
         prompts = batch_size * [self.ldm_info.prompt]
+        negative_prompts = batch_size * [self.ldm_info.negative_prompt]
         if self.ldm_info.enable_compel:
-            input_dict["prompt_embeds"], input_dict["pooled_prompt_embeds"] = self.compel(prompts)
+            if self.ldm_info.mode in ["turbo", "basic", "refine"]:
+                input_dict["prompt_embeds"], input_dict["pooled_prompt_embeds"] = self.compel(prompts)
+
+                if self.ldm_info.negative_prompt != "":
+                    input_dict["negative_prompt_embeds"], input_dict["negative_pooled_prompt_embeds"] = self.compel(
+                        negative_prompts
+                    )
+            else:
+                input_dict["prompt_embeds"] = self.compel(prompts)
+
+                if self.ldm_info.negative_prompt != "":
+                    input_dict["negative_prompt_embeds"] = self.compel(negative_prompts)
         else:
             input_dict["prompt"] = prompts
+
+            if self.ldm_info.negative_prompt != "":
+                input_dict["negative_prompt"] = negative_prompts
 
         if self.ldm_info.lora_scale > 0:
             input_dict["cross_atention_kwargs"] = {"scale": self.ldm_info.lora_scale}
 
-        if self.ldm_info.negative_prompt != "":
-            input_dict["negative_prompt"] = [self.ldm_info.negative_prompt]
-
-        info_dict = {
-            "prompt": self.ldm_info.prompt,
-            "negative_prompt": self.ldm_info.negative_prompt,
-            "initial seed": self.ldm_info.init_index,
-            "batch_size": batch_size,
-            "num_inference_steps": self.ldm_info.num_inference_steps,
-            "guidance_scale": self.ldm_info.guidance_scale,
-        }
-        logger.info("input_dict: %s", info_dict)
+        logger.debug("input_dict: %s", input_dict)
 
         return input_dict
 
@@ -197,7 +204,7 @@ def load_components(ldm_info: LDMInfo) -> Dict:
     logger.info("vae id: %s", ldm_info.vae_id)
 
     if ldm_info.hfmodel_id != "":
-        output["pipeline"] = DiffusionPipeline.from_pretrained(
+        output["pipeline"] = AutoPipelineForText2Image.from_pretrained(
             ldm_info.hfmodel_id,
             torch_dtype=torch_dtype,
             use_safetensors=True,
@@ -211,7 +218,7 @@ def load_components(ldm_info: LDMInfo) -> Dict:
     logger.info("hfmodel id: %s", ldm_info.hfmodel_id)
 
     if ldm_info.refiner_id != "":
-        output["refiner"] = DiffusionPipeline.from_pretrained(
+        output["refiner"] = AutoPipelineForText2Image.from_pretrained(
             ldm_info.refiner_id,
             text_encoder_2=pipe.text_encoder_2,
             torch_dtype=torch_dtype,
@@ -231,12 +238,15 @@ def load_components(ldm_info: LDMInfo) -> Dict:
     logger.info("img2img: %s", ldm_info.enable_img2img)
 
     if ldm_info.enable_compel:
-        output["compel"] = Compel(
-            tokenizer=[pipe.tokenizer, pipe.tokenizer_2],
-            text_encoder=[pipe.text_encoder, pipe.text_encoder_2],
-            returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
-            requires_pooled=[False, True],
-        )
+        if hasattr(pipe, "text_encoder_2"):
+            output["compel"] = Compel(
+                tokenizer=[pipe.tokenizer, pipe.tokenizer_2],
+                text_encoder=[pipe.text_encoder, pipe.text_encoder_2],
+                returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
+                requires_pooled=[False, True],
+            )
+        else:
+            output["compel"] = Compel(tokenizer=pipe.tokenizer, text_encoder=pipe.text_encoder)
     else:
         output["compel"] = None
     logger.info("compel: %s", ldm_info.enable_compel)
